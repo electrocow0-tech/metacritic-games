@@ -17,7 +17,12 @@ SEARCH_N = 20
 MIN_DURATION = 300          # отсекаем шортсы и короткие трейлеры
 REFRESH_AFTER = timedelta(days=7)
 MAX_TRANSCRIPT_CHARS = 14000
-YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True}
+YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
+            **({"proxy": settings.youtube_proxy} if settings.youtube_proxy else {})}
+
+
+class SubtitlesUnavailable(Exception):
+    pass
 
 SYSTEM = """Ты пересказываешь игровой летсплей по расшифровке речи блогера (автосубтитры, с таймкодами [мм:сс]).
 Ответь строго JSON-объектом на русском языке:
@@ -48,7 +53,10 @@ def transcript(video_id: str) -> tuple[list[tuple[int, str]], dict]:
             "views": info.get("view_count"), "duration": info.get("duration")}
     if not url:
         return [], meta
-    data = httpx.get(url, timeout=30).json()
+    r = httpx.get(url, timeout=30, proxy=settings.youtube_proxy or None)
+    if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+        raise SubtitlesUnavailable(f"HTTP {r.status_code}" + (", YouTube ограничивает IP сервера" if r.status_code == 429 else ""))
+    data = r.json()
     segs = []
     for ev in data.get("events") or []:
         text = "".join(s.get("utf8", "") for s in ev.get("segs") or []).replace("\n", " ").strip()
@@ -107,7 +115,13 @@ def process(run, item: dict) -> None:
     if not video:
         run.log(name, f"«{item['title']}»: ролик не найден", stage="letsplay", level="warn", slug=item["slug"])
         return
-    segs, meta = transcript(video["id"])
+    try:
+        segs, meta = transcript(video["id"])
+        subs_error = None
+    except SubtitlesUnavailable as e:
+        segs, subs_error = [], str(e)
+        meta = {"title": video.get("title"), "channel": video.get("channel"), "views": video.get("view_count"),
+                "duration": video.get("duration")}
     text = condense(segs)
     result, tin, tout, llm_error = {"summary": None, "moments": []}, 0, 0, None
     if text and settings.llm_enabled:
@@ -129,7 +143,9 @@ def process(run, item: dict) -> None:
         )
     if tin:
         bump(run.id, tokens_in=tin, tokens_out=tout, cost_usd=cost)
-    if not text:
+    if subs_error:
+        note = f"субтитры недоступны ({subs_error}), только ссылка"
+    elif not text:
         note = "субтитров нет, только ссылка"
     elif not settings.llm_enabled:
         note = "LLM не настроен, только ссылка"
@@ -138,5 +154,5 @@ def process(run, item: dict) -> None:
     else:
         note = f"{len(result['moments'])} моментов, {tin} → {tout} токенов, ${cost:.4f}"
     run.log(name, f"«{item['title']}»: {meta.get('views') or 0:,} просмотров, {note}".replace(",", " "),
-            stage="letsplay", slug=item["slug"], level="warn" if llm_error else "info",
+            stage="letsplay", slug=item["slug"], level="warn" if llm_error or subs_error else "info",
             data={"tokens_in": tin, "tokens_out": tout, "cost": cost, "title": item["title"]} if tin else None)
