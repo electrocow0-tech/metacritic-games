@@ -135,7 +135,11 @@ class Run:
             set_worker(name, "similar", "busy", item["title"])
             try:
                 if settings.embeddings_enabled:
-                    self.embed_game(name, item)
+                    try:
+                        self.embed_game(name, item)
+                    except Exception as e:  # без эмбеддинга похожие всё равно считаются по признакам
+                        self.log(name, f"«{item['title']}»: эмбеддинг не получен ({e}), похожие по признакам",
+                                 stage="embed", level="warn", slug=item["slug"])
                 else:
                     self.log(name, f"«{item['title']}»: вектор признаков (жанры, компании, платформы, TF-IDF описания)",
                              stage="embed", slug=item["slug"])

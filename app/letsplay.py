@@ -109,9 +109,12 @@ def process(run, item: dict) -> None:
         return
     segs, meta = transcript(video["id"])
     text = condense(segs)
-    result, tin, tout = {"summary": None, "moments": []}, 0, 0
+    result, tin, tout, llm_error = {"summary": None, "moments": []}, 0, 0, None
     if text and settings.llm_enabled:
-        result, tin, tout = summarize(item["title"], text, meta.get("duration"))
+        try:
+            result, tin, tout = summarize(item["title"], text, meta.get("duration"))
+        except Exception as e:  # ссылку на ролик сохраняем и без заключения
+            llm_error = str(e)
     cost = (tin * settings.llm_price_in + tout * settings.llm_price_out) / 1e6
     with pool.connection() as conn:
         conn.execute(
@@ -126,8 +129,14 @@ def process(run, item: dict) -> None:
         )
     if tin:
         bump(run.id, tokens_in=tin, tokens_out=tout, cost_usd=cost)
-    note = "субтитров нет" if not text else ("LLM не настроен, только ссылка" if not settings.llm_enabled
-                                             else f"{len(result['moments'])} моментов, {tin} → {tout} токенов, ${cost:.4f}")
+    if not text:
+        note = "субтитров нет, только ссылка"
+    elif not settings.llm_enabled:
+        note = "LLM не настроен, только ссылка"
+    elif llm_error:
+        note = f"заключение не получено ({llm_error[:80]}), только ссылка"
+    else:
+        note = f"{len(result['moments'])} моментов, {tin} → {tout} токенов, ${cost:.4f}"
     run.log(name, f"«{item['title']}»: {meta.get('views') or 0:,} просмотров, {note}".replace(",", " "),
-            stage="letsplay", slug=item["slug"],
+            stage="letsplay", slug=item["slug"], level="warn" if llm_error else "info",
             data={"tokens_in": tin, "tokens_out": tout, "cost": cost, "title": item["title"]} if tin else None)
