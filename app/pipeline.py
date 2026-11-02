@@ -100,6 +100,8 @@ class Run:
                 return
             s = llm.summarize(item["title"], kind, reviews)
             if s is None:
+                self.log(name, f"«{item['title']}»: {'рецензий' if kind == 'critic' else 'отзывов игроков'} "
+                               f"{len(reviews)}, мало для резюме", stage="summary", slug=item["slug"])
                 continue
             with pool.connection() as conn, conn.transaction():
                 conn.execute(
