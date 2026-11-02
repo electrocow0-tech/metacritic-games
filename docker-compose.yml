@@ -1,0 +1,57 @@
+# Деплой: /opt/metacritic-games, рядом лежит .env (в репозитории только .env.example).
+# Caddy на сервере проксирует games.1-lab.online на games-web:8000 через внешнюю сеть health-bot_default.
+# Порты наружу не публикуются.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  games-web:
+    build: .
+    image: metacritic-games:latest
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - default
+      - health-bot_default
+
+  games-worker:
+    build: .
+    image: metacritic-games:latest
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      games-web:
+        condition: service_started
+
+volumes:
+  pgdata:
+
+networks:
+  health-bot_default:
+    external: true
