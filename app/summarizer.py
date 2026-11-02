@@ -47,6 +47,11 @@ def reviews_hash(reviews: list[dict]) -> str:
     return hashlib.sha1("|".join(keys).encode()).hexdigest()
 
 
+def tidy(s) -> str:
+    """Тексты модели: длинное тире заменяем на дефис (цитаты не трогаем, они дословные)."""
+    return re.sub(r"\s*—\s*", " - ", str(s or "")).strip()
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().strip("\"'«»….").lower()
 
@@ -69,7 +74,7 @@ def verify_items(items: list, reviews: list[dict]) -> tuple[list[dict], int]:
         if hit is None or len(q) < 12:
             dropped += 1
             continue
-        out.append({"text": str(it["text"])[:120], "quote": str(it["quote"]).strip(), "src": reviews[hit]["source"]})
+        out.append({"text": tidy(it["text"])[:120], "quote": str(it["quote"]).strip(), "src": reviews[hit]["source"]})
     return out, dropped
 
 
@@ -97,7 +102,7 @@ class Summarizer:
         tin, tout = (usage.prompt_tokens, usage.completion_tokens) if usage else (0, 0)
         cost = (tin * settings.llm_price_in + tout * settings.llm_price_out) / 1e6
         return Summary(
-            verdict=str(data.get("verdict") or "").strip(), tagline=str(data.get("tagline") or "").strip()[:80],
+            verdict=tidy(data.get("verdict")), tagline=tidy(data.get("tagline"))[:80],
             likes=likes, dislikes=dislikes, reviews_used=len(used),
             tokens_in=tin, tokens_out=tout, cost_usd=cost, dropped=d1 + d2,
         )

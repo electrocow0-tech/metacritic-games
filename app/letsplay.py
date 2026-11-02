@@ -12,6 +12,7 @@ from openai import OpenAI
 from app.config import settings
 from app.db import pool
 from app.runs import bump
+from app.summarizer import tidy
 
 SEARCH_N = 20
 MIN_DURATION = 300          # отсекаем шортсы и короткие трейлеры
@@ -98,9 +99,9 @@ def summarize(title: str, text: str, duration: int | None) -> tuple[dict, int, i
         except (KeyError, TypeError, ValueError):
             continue
         if t >= 0 and (not duration or t <= duration) and m.get("text"):
-            moments.append({"t": t, "text": str(m["text"])[:90]})
+            moments.append({"t": t, "text": tidy(m["text"])[:90]})
     u = resp.usage
-    return ({"summary": str(data.get("summary") or "").strip(), "moments": sorted(moments, key=lambda m: m["t"])[:6]},
+    return ({"summary": tidy(data.get("summary")), "moments": sorted(moments, key=lambda m: m["t"])[:6]},
             u.prompt_tokens if u else 0, u.completion_tokens if u else 0)
 
 
