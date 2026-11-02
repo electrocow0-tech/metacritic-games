@@ -8,32 +8,32 @@ fetch = lambda p: PAGES.get(p, [])
 
 
 def test_first_see_all_run_takes_20_and_keeps_cursor_on_unfinished_page():
-    picked, page = plan_see_all(fetch, 1, set(), 20, 10)
+    picked, page, last = plan_see_all(fetch, 1, set(), 20, 10)
     assert picked == PAGES[1][:20]
-    assert page == 1  # 4 игры страницы ещё не обработаны
+    assert page == 1 and last == 1  # 4 игры страницы ещё не обработаны
 
 
 def test_next_run_finishes_page_and_moves_cursor():
     done = set(PAGES[1][:20])
-    picked, page = plan_see_all(fetch, 1, done, 20, 10)
+    picked, page, last = plan_see_all(fetch, 1, done, 20, 10)
     assert picked == PAGES[1][20:] + PAGES[2][:16]
-    assert page == 2
+    assert page == 2 and last == 2
 
 
 def test_already_processed_today_are_skipped():
     done = {"a0", "a5", "a7"}
-    picked, _ = plan_see_all(fetch, 1, done, 20, 10)
+    picked, _, _ = plan_see_all(fetch, 1, done, 20, 10)
     assert not done & set(picked)
     assert len(picked) == 20
 
 
 def test_fully_processed_page_is_passed():
-    picked, page = plan_see_all(fetch, 1, set(PAGES[1]), 5, 10)
+    picked, page, _ = plan_see_all(fetch, 1, set(PAGES[1]), 5, 10)
     assert picked == PAGES[2][:5] and page == 2
 
 
 def test_stops_when_pages_end():
-    picked, page = plan_see_all(fetch, 3, set(), 30, 10)
+    picked, page, _ = plan_see_all(fetch, 3, set(), 30, 10)
     assert picked == PAGES[3] and page == 4
 
 

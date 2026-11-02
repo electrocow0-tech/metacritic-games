@@ -17,15 +17,15 @@ def today() -> date:
 
 
 def plan_see_all(fetch_page: Callable[[int], list[str]], start_page: int, skip: set[str], need: int,
-                 max_pages: int) -> tuple[list[str], int]:
+                 max_pages: int) -> tuple[list[str], int, int]:
     """Берёт до `need` slug'ов с SEE ALL, начиная со страницы-курсора.
 
     Страница, с которой забрали всё необработанное, считается пройденной, и курсор уходит дальше.
     Если на странице остались необработанные игры (взяли только часть), курсор остаётся на ней.
-    Возвращает (slug'и, новый курсор).
+    Возвращает (slug'и, новый курсор, последняя страница, с которой что-то взяли).
     """
     picked: list[str] = []
-    page = start_page
+    page = last = start_page
     for _ in range(max_pages):
         if len(picked) >= need:
             break
@@ -35,10 +35,16 @@ def plan_see_all(fetch_page: Callable[[int], list[str]], start_page: int, skip: 
         rest = [s for s in dict.fromkeys(slugs) if s not in skip and s not in picked]
         take = rest[: need - len(picked)]
         picked += take
+        if take:
+            last = page
         if len(take) < len(rest):
             break
         page += 1
-    return picked, page
+    return picked, page, last
+
+
+def pages_label(start: int, last: int) -> str:
+    return f"стр. {start}" + (f"-{last}" if last > start else "")
 
 
 def select_batch(conn, client: MetacriticClient, day: date, need: int) -> tuple[list[tuple[str, str]], str]:
@@ -54,19 +60,20 @@ def select_batch(conn, client: MetacriticClient, day: date, need: int) -> tuple[
         batch = [(s, "new_releases") for s in fresh]
         source = f"New Releases ({len(fresh)})"
         if len(batch) < need:  # в разделе бывает меньше 20 игр: добираем из SEE ALL
-            extra, page = plan_see_all(fetch, state["see_all_page"], done | set(fresh), need - len(batch),
-                                       settings.max_see_all_pages)
+            extra, page, last = plan_see_all(fetch, state["see_all_page"], done | set(fresh), need - len(batch),
+                                             settings.max_see_all_pages)
             batch += [(s, "see_all") for s in extra]
-            source += f" + SEE ALL стр. {state['see_all_page']}" + (f"-{page - 1}" if page - 1 > state["see_all_page"] else "")
+            if extra:
+                source += " + SEE ALL " + pages_label(state["see_all_page"], last)
         else:
             page = state["see_all_page"]
         conn.execute("UPDATE crawl_days SET new_releases_done = true, see_all_page = %s, updated_at = now() WHERE day = %s",
                      (page, day))
     else:
         start = state["see_all_page"]
-        picked, page = plan_see_all(fetch, start, done, need, settings.max_see_all_pages)
+        picked, page, last = plan_see_all(fetch, start, done, need, settings.max_see_all_pages)
         batch = [(s, "see_all") for s in picked]
-        source = f"SEE ALL · новые · стр. {start}" + (f"-{page - 1}" if page - 1 > start else "")
+        source = "SEE ALL · новые · " + pages_label(start, last)
         conn.execute("UPDATE crawl_days SET see_all_page = %s, updated_at = now() WHERE day = %s", (page, day))
     return batch, source
 
