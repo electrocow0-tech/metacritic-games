@@ -11,7 +11,8 @@ dependencies = [
     "pydantic-settings>=2.6",
     "apscheduler>=3.10,<4",
     "openai>=1.54",
-    "yt-dlp>=2024.11.4",
+    "yt-dlp>=2025.5.22",
+    "bgutil-ytdlp-pot-provider>=1.1",
     "numpy>=2.1",
     "tzdata>=2024.2",
 ]

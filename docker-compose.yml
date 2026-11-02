@@ -50,12 +50,23 @@ services:
     env_file: .env
     environment:
       DATABASE_HOST: games-db
+      BGUTIL_URL: http://bgutil-provider:4416
     command: ["python", "-m", "app.worker"]
     depends_on:
       db:
         condition: service_healthy
       games-web:
         condition: service_started
+      bgutil-provider:
+        condition: service_started
+
+  # PO token для YouTube: без него yt-dlp не получает субтитры (на сервере это выглядит как HTTP 429)
+  bgutil-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    init: true
+    expose:
+      - "4416"
 
 volumes:
   pgdata:

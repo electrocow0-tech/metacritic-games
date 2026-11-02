@@ -5,7 +5,6 @@
 import json
 from datetime import datetime, timedelta
 
-import httpx
 import yt_dlp
 from openai import OpenAI
 
@@ -19,7 +18,10 @@ MIN_DURATION = 300          # отсекаем шортсы и короткие 
 REFRESH_AFTER = timedelta(days=7)
 MAX_TRANSCRIPT_CHARS = 14000
 YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
-            **({"proxy": settings.youtube_proxy} if settings.youtube_proxy else {})}
+            **({"proxy": settings.youtube_proxy} if settings.youtube_proxy else {}),
+            # YouTube требует PO token для субтитров; токен выдаёт отдельный контейнер bgutil-provider
+            **({"extractor_args": {"youtubepot-bgutilhttp": {"base_url": [settings.bgutil_url]}}}
+               if settings.bgutil_url else {})}
 
 
 class SubtitlesUnavailable(Exception):
@@ -45,19 +47,24 @@ def transcript(video_id: str) -> tuple[list[tuple[int, str]], dict]:
     """Автосубтитры на языке оригинала (дорожка *-orig), иначе английские. Возвращает [(секунда, текст)] и метаданные."""
     with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-    caps = info.get("automatic_captions") or {}
-    subs = info.get("subtitles") or {}
-    lang = next((k for k in caps if k.endswith("-orig")), None)
-    tracks = caps.get(lang) if lang else (subs.get("en") or caps.get("en") or subs.get("ru") or caps.get("ru"))
-    url = next((t["url"] for t in tracks or [] if t.get("ext") == "json3"), None)
-    meta = {"title": info.get("title"), "channel": info.get("channel") or info.get("uploader"),
-            "views": info.get("view_count"), "duration": info.get("duration")}
-    if not url:
-        return [], meta
-    r = httpx.get(url, timeout=30, proxy=settings.youtube_proxy or None)
-    if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
-        raise SubtitlesUnavailable(f"HTTP {r.status_code}" + (", YouTube ограничивает IP сервера" if r.status_code == 429 else ""))
-    data = r.json()
+        caps = info.get("automatic_captions") or {}
+        subs = info.get("subtitles") or {}
+        lang = next((k for k in caps if k.endswith("-orig")), None)
+        tracks = caps.get(lang) if lang else (subs.get("en") or caps.get("en") or subs.get("ru") or caps.get("ru"))
+        url = next((t["url"] for t in tracks or [] if t.get("ext") == "json3"), None)
+        meta = {"title": info.get("title"), "channel": info.get("channel") or info.get("uploader"),
+                "views": info.get("view_count"), "duration": info.get("duration")}
+        if not url:
+            return [], meta
+        # тем же клиентом yt-dlp: с его заголовками, прокси и PO token в URL
+        try:
+            raw = ydl.urlopen(url).read()
+        except Exception as e:
+            raise SubtitlesUnavailable(str(e)[:120])
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise SubtitlesUnavailable("ответ не JSON")
     segs = []
     for ev in data.get("events") or []:
         text = "".join(s.get("utf8", "") for s in ev.get("segs") or []).replace("\n", " ").strip()

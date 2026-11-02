@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     embedding_price: float = 0.02
 
     letsplay_enabled: bool = True
-    youtube_proxy: str = ""       # опционально: YouTube режет субтитры с IP датацентров (HTTP 429)
+    youtube_proxy: str = ""       # опционально: прокси для запросов к YouTube
+    bgutil_url: str = ""          # сервер PO token (bgutil-ytdlp-pot-provider), без него YouTube не отдаёт субтитры
 
     @property
     def tz(self) -> ZoneInfo:
