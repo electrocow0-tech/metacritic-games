@@ -177,7 +177,7 @@ def monitor_state() -> dict:
         "stages": stages,
         "counters": {**{k: jsonable(v) for k, v in totals.items()},
                      "tokensRun": (run["tokens_in"] + run["tokens_out"]) if run else 0,
-                     "costPerGame": float(run["cost_usd"]) / games_done if run and games_done else None},
+                     "costPerGame": float(run["cost_usd"]) / games_done if run and games_done and run["cost_usd"] else None},
         "workers": [clean(w) for w in workers],
         "costs": [clean(c) for c in costs],
         "history": [clean(h) for h in reversed(hist)],
