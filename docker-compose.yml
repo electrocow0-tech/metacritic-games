@@ -12,6 +12,10 @@ services:
       TZ: ${TZ:-Europe/Moscow}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      default:
+        # уникальное имя: в сети health-bot_default уже есть чужой сервис db
+        aliases: [games-db]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -23,6 +27,8 @@ services:
     image: metacritic-games:latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      DATABASE_HOST: games-db
     expose:
       - "8000"
     depends_on:
@@ -42,6 +48,8 @@ services:
     image: metacritic-games:latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      DATABASE_HOST: games-db
     command: ["python", "-m", "app.worker"]
     depends_on:
       db:

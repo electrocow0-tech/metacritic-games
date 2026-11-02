@@ -1,4 +1,5 @@
 """Настройки сервиса: только из переменных окружения (.env на сервере, в репозитории .env.example)."""
+from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
@@ -9,6 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://postgres@localhost:5432/scorecast"
+    database_host: str = ""       # подмена хоста из DATABASE_URL (в compose: games-db)
     public_url: str = "http://localhost:8000"
     tz_name: str = Field("Europe/Moscow", alias="TZ")
 
@@ -38,7 +40,12 @@ class Settings(BaseSettings):
     @property
     def dsn(self) -> str:
         # DATABASE_URL может прийти в формате SQLAlchemy (postgresql+asyncpg://), psycopg нужен обычный
-        return self.database_url.replace("+asyncpg", "").replace("+psycopg", "")
+        url = urlsplit(self.database_url.replace("+asyncpg", "").replace("+psycopg", ""))
+        if self.database_host:
+            creds, _, hostport = url.netloc.rpartition("@")
+            port = hostport.rpartition(":")[2] if ":" in hostport else "5432"
+            url = url._replace(netloc=f"{creds}@{self.database_host}:{port}" if creds else f"{self.database_host}:{port}")
+        return urlunsplit(url)
 
     @property
     def llm_enabled(self) -> bool:
