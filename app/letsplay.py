@@ -19,8 +19,11 @@ REFRESH_AFTER = timedelta(days=7)
 MAX_TRANSCRIPT_CHARS = 14000
 YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
             **({"proxy": settings.youtube_proxy} if settings.youtube_proxy else {}),
-            # YouTube требует PO token для субтитров; токен выдаёт отдельный контейнер bgutil-provider
-            **({"extractor_args": {"youtubepot-bgutilhttp": {"base_url": [settings.bgutil_url]}}}
+            # YouTube требует PO token для субтитров. С сервером bgutil-ytdlp-pot-provider токен попадает в URL
+            # субтитров веб-клиента; видеоформаты при этом не нужны (без JS runtime их нет)
+            **({"ignore_no_formats_error": True,
+                "extractor_args": {"youtubepot-bgutilhttp": {"base_url": [settings.bgutil_url]},
+                                   "youtube": {"fetch_pot": ["always"], "player_client": ["web"]}}}
                if settings.bgutil_url else {})}
 
 
@@ -60,7 +63,10 @@ def transcript(video_id: str) -> tuple[list[tuple[int, str]], dict]:
         try:
             raw = ydl.urlopen(url).read()
         except Exception as e:
-            raise SubtitlesUnavailable(str(e)[:120])
+            msg = str(e)[:120]
+            if "429" in msg:
+                msg += ": YouTube не отдаёт субтитры IP этого сервера"
+            raise SubtitlesUnavailable(msg)
     try:
         data = json.loads(raw)
     except ValueError:
