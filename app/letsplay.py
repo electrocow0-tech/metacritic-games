@@ -3,6 +3,8 @@
 Поиск и субтитры через yt-dlp (без YouTube Data API и без скачивания видео), заключение через тот же LLM.
 """
 import json
+import re
+import unicodedata
 from datetime import datetime, timedelta
 
 import yt_dlp
@@ -38,10 +40,33 @@ moments: 5-6 ключевых моментов по возрастанию вр�
 Не выдумывай того, чего нет в расшифровке. Без длинного тире."""
 
 
+TITLE_STOP = {"the", "of", "and", "a", "an", "to", "in", "on", "for", "edition", "remastered", "remaster", "deluxe",
+              "collection", "definitive", "complete", "game", "goty"}
+
+
+def _plain(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def key_words(title: str) -> list[str]:
+    """Значимые слова основной части названия (до двоеточия или « - »)."""
+    main = re.split(r":| - | – ", title)[0]
+    words = [w for w in _plain(main).split() if w not in TITLE_STOP and (len(w) >= 3 or w.isdigit())]
+    return words or _plain(main).split()
+
+
+def is_relevant(game_title: str, video_title: str | None) -> bool:
+    """Ролик про эту игру: в его названии есть все значимые слова названия игры."""
+    vt = f" {_plain(video_title or '')} "
+    return all(f" {w} " in vt for w in key_words(game_title))
+
+
 def find_video(title: str) -> dict | None:
+    """Самый просматриваемый ролик длиннее 5 минут среди тех, что действительно про эту игру."""
     with yt_dlp.YoutubeDL({**YDL_OPTS, "extract_flat": True}) as ydl:
-        res = ydl.extract_info(f"ytsearch{SEARCH_N}:{title} gameplay", download=False)
-    entries = [e for e in res.get("entries") or [] if e and e.get("id")]
+        res = ydl.extract_info(f'ytsearch{SEARCH_N}:"{title}" gameplay', download=False)
+    entries = [e for e in res.get("entries") or [] if e and e.get("id") and is_relevant(title, e.get("title"))]
     long = [e for e in entries if (e.get("duration") or 0) >= MIN_DURATION] or entries
     return max(long, key=lambda e: e.get("view_count") or 0) if long else None
 
@@ -118,16 +143,18 @@ def summarize(title: str, text: str, duration: int | None) -> tuple[dict, int, i
             u.prompt_tokens if u else 0, u.completion_tokens if u else 0)
 
 
-def process(run, item: dict) -> None:
+def process(run, item: dict, force: bool = False) -> None:
     name = "letsplay-1"
     with pool.connection() as conn:
         old = conn.execute("SELECT updated_at FROM letsplays WHERE game_id = %s", (item["id"],)).fetchone()
-    if old and old["updated_at"] > datetime.now(old["updated_at"].tzinfo) - REFRESH_AFTER:
+    if not force and old and old["updated_at"] > datetime.now(old["updated_at"].tzinfo) - REFRESH_AFTER:
         run.log(name, f"«{item['title']}»: летсплей свежий, пропуск", stage="letsplay", slug=item["slug"])
         return
     video = find_video(item["title"])
     if not video:
-        run.log(name, f"«{item['title']}»: ролик не найден", stage="letsplay", level="warn", slug=item["slug"])
+        with pool.connection() as conn:  # старая нерелевантная ссылка не должна остаться
+            conn.execute("DELETE FROM letsplays WHERE game_id = %s", (item["id"],))
+        run.log(name, f"«{item['title']}»: ролика именно про эту игру не нашлось", stage="letsplay", slug=item["slug"])
         return
     try:
         segs, meta = transcript(video["id"])

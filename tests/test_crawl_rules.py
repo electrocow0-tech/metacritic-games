@@ -63,3 +63,11 @@ def test_verify_finds_quote_when_review_index_is_wrong():
     items = [{"text": "Тормозит", "review": 1, "quote": "stuttering everywhere, needs a patch"}]
     ok, _ = verify_items(items, REVIEWS)
     assert ok[0]["src"] == "Player B"
+
+
+def test_letsplay_relevance_by_title_words():
+    from app.letsplay import is_relevant
+    assert not is_relevant("The Art Keeper", "LGR - Dungeon Keeper - DOS PC Game Review")
+    assert is_relevant("Phantom Blade Zero", "PHANTOM BLADE ZERO Walkthrough Gameplay Part 1")
+    assert is_relevant("Ghost of Yotei: Echoes of Sekigahara", "Ghost of Yōtei Echoes of Sekigahara - Full Gameplay")
+    assert not is_relevant("Croc 2 Kingdom of the Gobbos", "Croc Legend of the Gobbos Longplay")
