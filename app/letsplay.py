@@ -32,6 +32,20 @@ YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
 class SubtitlesUnavailable(Exception):
     pass
 
+
+BLOCK_PAUSE = timedelta(hours=6)
+_blocked_until: datetime | None = None   # YouTube заблокировал IP (429 или проверка на бота): не дёргаем его зря
+
+
+def subtitles_paused() -> bool:
+    return _blocked_until is not None and datetime.now() < _blocked_until
+
+
+def _remember_block(msg: str) -> None:
+    global _blocked_until
+    if "429" in msg or "not a bot" in msg or "Sign in" in msg:
+        _blocked_until = datetime.now() + BLOCK_PAUSE
+
 SYSTEM = """Ты пересказываешь игровой летсплей по расшифровке речи блогера (автосубтитры, с таймкодами [мм:сс]).
 Ответь строго JSON-объектом на русском языке:
 {"summary": "2-3 предложения: к какому выводу приходит автор, что ему понравилось и что нет",
@@ -156,13 +170,17 @@ def process(run, item: dict, force: bool = False) -> None:
             conn.execute("DELETE FROM letsplays WHERE game_id = %s", (item["id"],))
         run.log(name, f"«{item['title']}»: ролика именно про эту игру не нашлось", stage="letsplay", slug=item["slug"])
         return
-    try:
-        segs, meta = transcript(video["id"])
-        subs_error = None
-    except SubtitlesUnavailable as e:
-        segs, subs_error = [], str(e)
-        meta = {"title": video.get("title"), "channel": video.get("channel"), "views": video.get("view_count"),
-                "duration": video.get("duration")}
+    meta = {"title": video.get("title"), "channel": video.get("channel") or video.get("uploader"),
+            "views": video.get("view_count"), "duration": video.get("duration")}
+    segs, subs_error = [], None
+    if subtitles_paused():
+        subs_error = "YouTube заблокировал IP сервера, субтитры на паузе"
+    else:
+        try:
+            segs, meta = transcript(video["id"])
+        except Exception as e:  # ссылку на найденный ролик сохраняем при любой ошибке субтитров
+            subs_error = str(e).replace("ERROR: ", "")[:120]
+            _remember_block(subs_error)
     text = condense(segs)
     result, tin, tout, llm_error = {"summary": None, "moments": []}, 0, 0, None
     if text and settings.llm_enabled:
@@ -194,6 +212,7 @@ def process(run, item: dict, force: bool = False) -> None:
         note = f"заключение не получено ({llm_error[:80]}), только ссылка"
     else:
         note = f"{len(result['moments'])} моментов, {tin} → {tout} токенов, ${cost:.4f}"
-    run.log(name, f"«{item['title']}»: {meta.get('views') or 0:,} просмотров, {note}".replace(",", " "),
+    views = f"{meta.get('views') or 0:,}".replace(",", " ")
+    run.log(name, f"«{item['title']}»: {views} просмотров, {note}",
             stage="letsplay", slug=item["slug"], level="warn" if llm_error or subs_error else "info",
             data={"tokens_in": tin, "tokens_out": tout, "cost": cost, "title": item["title"]} if tin else None)
