@@ -21,6 +21,10 @@ class MetacriticError(Exception):
     pass
 
 
+class NotFound(MetacriticError):
+    """Карточки нет на сайте (снята или ещё не опубликована): это не сбой."""
+
+
 @dataclass
 class GameData:
     slug: str
@@ -74,7 +78,7 @@ class MetacriticClient:
                 if r.status_code == 200:
                     return r.json() if as_json else r.text
                 if r.status_code == 404:
-                    raise MetacriticError(f"404 {url}")
+                    raise NotFound(f"404 {url}")
                 status, err = r.status_code, None
             backoff = 2 ** attempt
             if self.on_retry:
@@ -110,7 +114,7 @@ class MetacriticClient:
         comp = {c["meta"]["componentName"]: (c.get("data") or {}) for c in page.get("components", [])}
         it = (comp.get("product") or {}).get("item")
         if not it:
-            raise MetacriticError(f"no product for {slug}")
+            raise NotFound(f"no product for {slug}")
         companies = (it.get("production") or {}).get("companies") or []
         card = next((im for im in it.get("images") or [] if im.get("typeName") == "cardImage"), None)
         video = it.get("video") or {}

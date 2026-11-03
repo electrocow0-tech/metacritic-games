@@ -11,7 +11,7 @@ import traceback
 from app import crawler, similar
 from app.config import settings
 from app.db import pool
-from app.metacritic import MetacriticClient, MetacriticError
+from app.metacritic import MetacriticClient, NotFound
 from app.runs import bump, emit, set_worker
 from app.summarizer import Summarizer, reviews_hash
 
@@ -58,7 +58,7 @@ class Run:
                              stage="parse", slug=slug)
                     self.q_summary.put({"id": game_id, "slug": slug, "title": g.title})
                     set_worker(name, "collect", "idle", None, done=1)
-                except MetacriticError as e:  # карточки нет на сайте (снята или ещё не опубликована)
+                except NotFound as e:  # карточки нет на сайте (снята или ещё не опубликована)
                     set_worker(name, "collect", "idle")
                     self.log(name, f"{slug}: пропуск, {e}", stage="collect", level="warn", slug=slug)
                 except Exception as e:  # одна игра не должна ронять весь заход
