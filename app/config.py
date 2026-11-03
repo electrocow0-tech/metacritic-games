@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     letsplay_enabled: bool = True
     youtube_proxy: str = ""       # прокси с residential-выходом: без него YouTube не отдаёт субтитры серверным IP
+    youtube_interval: float = 1.0       # секунд между запросами к YouTube
+    youtube_hourly_limit: int = 15      # роликов с расшифровкой в час (один residential-выход блокируется после ~20 подряд)
+    youtube_block_pause_min: int = 30   # пауза запросов субтитров после 429 / IpBlocked
 
     @property
     def tz(self) -> ZoneInfo:

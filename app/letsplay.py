@@ -4,13 +4,15 @@
 - Автосубтитры: youtube-transcript-api. YouTube отдаёт их только на residential IP, поэтому на сервере
   запросы идут через прокси из YOUTUBE_PROXY. Без прокси или без субтитров сохраняется ссылка на ролик.
 - Заключение и ключевые моменты: тот же LLM, что и для резюме.
-Темп обращений к YouTube: не чаще 1 запроса в секунду.
+Темп, лимит роликов в час и пауза после блокировки задаются в env (YOUTUBE_INTERVAL, YOUTUBE_HOURLY_LIMIT,
+YOUTUBE_BLOCK_PAUSE_MIN).
 """
 import json
 import re
 import threading
 import time
 import unicodedata
+from collections import deque
 from datetime import datetime, timedelta
 
 import yt_dlp
@@ -28,8 +30,6 @@ SEARCH_N = 20
 MIN_DURATION = 300          # отсекаем шортсы и короткие трейлеры
 REFRESH_AFTER = timedelta(days=7)
 MAX_TRANSCRIPT_CHARS = 14000
-YT_INTERVAL = 1.0           # секунд между запросами к YouTube
-BLOCK_PAUSE = timedelta(minutes=30)
 YDL_OPTS = {"quiet": True, "no_warnings": True, "skip_download": True,
             **({"proxy": settings.youtube_proxy} if settings.youtube_proxy else {})}
 TITLE_STOP = {"the", "of", "and", "a", "an", "to", "in", "on", "for", "edition", "remastered", "remaster", "deluxe",
@@ -45,6 +45,7 @@ moments: 5-6 ключевых моментов по возрастанию вр�
 _lock = threading.Lock()
 _last_call = 0.0
 _blocked_until: datetime | None = None   # YouTube ограничил запросы (429 или блок): короткая пауза
+_recent: deque = deque()                  # время запросов расшифровок за последний час
 
 
 class NoSubtitles(Exception):
@@ -58,7 +59,7 @@ class SubtitlesBlocked(Exception):
 def _pace() -> None:
     global _last_call
     with _lock:
-        wait = YT_INTERVAL - (time.monotonic() - _last_call)
+        wait = settings.youtube_interval - (time.monotonic() - _last_call)
         if wait > 0:
             time.sleep(wait)
         _last_call = time.monotonic()
@@ -66,6 +67,18 @@ def _pace() -> None:
 
 def subtitles_paused() -> bool:
     return _blocked_until is not None and datetime.now() < _blocked_until
+
+
+def hourly_limit_reached() -> bool:
+    now = time.monotonic()
+    while _recent and now - _recent[0] > 3600:
+        _recent.popleft()
+    return settings.youtube_hourly_limit > 0 and len(_recent) >= settings.youtube_hourly_limit
+
+
+def _block() -> None:
+    global _blocked_until
+    _blocked_until = datetime.now() + timedelta(minutes=settings.youtube_block_pause_min)
 
 
 # ---------- поиск ----------
@@ -106,9 +119,9 @@ def find_video(title: str) -> dict | None:
 
 def transcript(video_id: str) -> list[tuple[int, str]]:
     """Автосубтитры ролика: английские, иначе любая автоматическая дорожка. [(секунда, текст)]."""
-    global _blocked_until
     proxy = settings.youtube_proxy
     api = YouTubeTranscriptApi(proxy_config=GenericProxyConfig(http_url=proxy, https_url=proxy) if proxy else None)
+    _recent.append(time.monotonic())
     try:
         _pace()
         tracks = api.list(video_id)
@@ -123,11 +136,11 @@ def transcript(video_id: str) -> list[tuple[int, str]]:
     except (NoTranscriptFound, TranscriptsDisabled) as e:
         raise NoSubtitles(type(e).__name__) from e
     except (RequestBlocked, IpBlocked) as e:
-        _blocked_until = datetime.now() + BLOCK_PAUSE
+        _block()
         raise SubtitlesBlocked(type(e).__name__) from e
     except Exception as e:
         if "429" in str(e):
-            _blocked_until = datetime.now() + BLOCK_PAUSE
+            _block()
             raise SubtitlesBlocked("HTTP 429") from e
         raise
     return [(int(s.start), s.text.replace("\n", " ").strip()) for s in fetched if s.text.strip()]
@@ -195,14 +208,16 @@ def process(run, item: dict, force: bool = False, reuse_video: bool = False) -> 
 
     segs, problem, level = [], None, "info"
     if subtitles_paused():
-        problem, level = "YouTube ограничил запросы, субтитры на паузе 30 минут", "warn"
+        problem, level = "YouTube ограничил запросы, субтитры на паузе", "warn"
+    elif hourly_limit_reached():
+        problem = f"лимит {settings.youtube_hourly_limit} расшифровок в час"
     else:
         try:
             segs = transcript(video["id"])
         except NoSubtitles:
             problem = "у ролика нет автосубтитров"
         except SubtitlesBlocked as e:
-            problem, level = f"YouTube не отдал субтитры ({e}), пауза 30 минут", "warn"
+            problem, level = f"YouTube не отдал субтитры ({e}), пауза {settings.youtube_block_pause_min} мин", "warn"
         except Exception as e:  # ссылку на найденный ролик сохраняем при любой ошибке субтитров
             problem, level = f"субтитры не получены: {str(e)[:100]}", "warn"
     text = condense(segs)

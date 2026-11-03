@@ -10,3 +10,4 @@ dist/
 screenshots/
 .pytest_cache/
 tools/prototype/.cache/
+logs/
