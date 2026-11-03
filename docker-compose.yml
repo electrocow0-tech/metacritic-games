@@ -51,6 +51,9 @@ services:
     environment:
       DATABASE_HOST: games-db
     command: ["python", "-m", "app.worker"]
+    extra_hosts:
+      # прокси для YouTube на хосте: YOUTUBE_PROXY=socks5h://host.docker.internal:<порт> в .env
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
